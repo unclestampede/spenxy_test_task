@@ -29,6 +29,8 @@ class CardManipulationService:
             await self._update_card_nick_name(db=db, data_in=data_in, nick_name=data_in.nick_name, card=card)
 
             await self._update_card_status(db=db, status=data_in.status, card=card, transaction_info=transaction_info)
+
+            await self._update_card_limits(db=db, data_in=data_in, card_id=card_id, card=card, transaction_info=transaction_info)
         except HTTPException as e:
             raise HTTPException(status_code=e.status_code, detail=e.detail)
         except Exception as e:
@@ -172,28 +174,7 @@ class CardManipulationService:
             )
 
         if card.balance.limit:
-            for limit_ in card.balance.limit:
-                if limit_.amount <= 0:
-                    raise HTTPException(
-                        status_code=400, detail="Invalid limit amount. The amount must be greater than zero."
-                    )
-                balance = card.balance
-                if limit_.interval == LimitType.all_time and limit_.amount <= (balance.used + balance.pending_balance):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Invalid limit amount. The amount must be greater than sum spend and hold.",
-                    )
-                if transaction_info.initiator.email in ['crealution.team@gmail.com']:
-                    if limit_.interval == LimitType.all_time and limit_.amount < 0.01:
-                        raise HTTPException(
-                            status_code=400, detail="ALL TIME limit should be over than or equal to $0.01."
-                        )
-                else:
-                    if limit_.interval == LimitType.all_time and limit_.amount < 25:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="Invalid limit amount. The amount must be greater than or equal to $25.",
-                        )
+            await self._validate_card_limits(card=card, initiator=transaction_info.initiator)
 
         provider_name, bin_code = await get_vendor_name(
             db=db, client_id=client.client_id, bin_code=crud.bins.get(db=db, id=card.bin_id).code
@@ -305,3 +286,27 @@ class CardManipulationService:
                     balances=card.balance, amount=abs(limit)
                 )
                 logger.info(f'Change per transaction limit for card {card.mask_number} in {limit} USD')
+
+    async def _validate_card_limits(self, card: tables.Card, initiator: str):
+        for limit_ in card.balance.limit:
+            if limit_.amount <= 0:
+                raise HTTPException(
+                    status_code=400, detail="Invalid limit amount. The amount must be greater than zero."
+                )
+            balance = card.balance
+            if limit_.interval == LimitType.all_time and limit_.amount <= (balance.used + balance.pending_balance):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid limit amount. The amount must be greater than sum spend and hold.",
+                )
+            if initiator.email in ['crealution.team@gmail.com']:
+                if limit_.interval == LimitType.all_time and limit_.amount < 0.01:
+                    raise HTTPException(
+                        status_code=400, detail="ALL TIME limit should be over than or equal to $0.01."
+                    )
+            else:
+                if limit_.interval == LimitType.all_time and limit_.amount < 25:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid limit amount. The amount must be greater than or equal to $25.",
+                    )
